@@ -223,3 +223,13 @@ async def add_book(req: BookRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug-env")
+async def debug_env():
+    return {
+        "anthropic_key_set": bool(ANTHROPIC_API_KEY),
+        "anthropic_key_prefix": ANTHROPIC_API_KEY[:7] if ANTHROPIC_API_KEY else "empty",
+        "notion_key_set": bool(NOTION_API_KEY),
+        "notion_db_set": bool(NOTION_DATABASE_ID),
+    }
