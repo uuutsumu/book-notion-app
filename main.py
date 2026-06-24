@@ -4,6 +4,7 @@ import json
 import httpx
 from datetime import date
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from bs4 import BeautifulSoup
 import anthropic
@@ -257,6 +258,12 @@ async def add_book(req: BookRequest):
         "notion_url": notion_url,
         "message": f"「{title}」をNotionに登録しました",
     }
+
+
+@app.post("/add-book-text")
+async def add_book_text(req: BookRequest):
+    result = await add_book(req)
+    return PlainTextResponse(result.get("message", "処理完了"))
 
 
 @app.get("/health")
