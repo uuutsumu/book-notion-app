@@ -51,11 +51,24 @@ def fetch_page_text(url: str) -> str:
         return ""
 
 
+def isbn10_to_13(isbn10: str) -> str:
+    digits = "978" + isbn10[:9]
+    total = sum((3 if i % 2 else 1) * int(d) for i, d in enumerate(digits))
+    check = (10 - (total % 10)) % 10
+    return digits + str(check)
+
+
 def fetch_via_google_books(asin_or_isbn: str) -> dict | None:
-    for query in [f"isbn:{asin_or_isbn}", asin_or_isbn]:
+    queries = [f"isbn:{asin_or_isbn}"]
+    if len(asin_or_isbn) == 10 and asin_or_isbn.isdigit():
+        isbn13 = isbn10_to_13(asin_or_isbn)
+        queries.append(f"isbn:{isbn13}")
+    queries.append(asin_or_isbn)
+
+    for query in queries:
         try:
             r = httpx.get(
-                f"https://www.googleapis.com/books/v1/volumes?q={query}&langRestrict=ja",
+                f"https://www.googleapis.com/books/v1/volumes?q={query}",
                 timeout=10,
             )
             items = r.json().get("items", [])
