@@ -148,29 +148,31 @@ JSONのみを返してください。余分なテキストは不要です。"""
     return json.loads(text)
 
 
+def _notion_query(filter_body: dict) -> list:
+    r = httpx.post(
+        f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query",
+        headers={
+            "Authorization": f"Bearer {NOTION_API_KEY}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json",
+        },
+        json={"filter": filter_body},
+        timeout=10,
+    )
+    return r.json().get("results", [])
+
+
 def is_already_registered(title: str, isbn: str | None) -> bool:
-    import sys
     try:
-        if isbn:
-            res = notion.databases.query(
-                database_id=NOTION_DATABASE_ID,
-                filter={"property": "ISBN", "rich_text": {"equals": isbn}},
-            )
-            if res["results"]:
-                return True
-    except Exception as e:
-        print(f"[dup-check] ISBN query error: {e}", file=sys.stderr)
+        if isbn and _notion_query({"property": "ISBN", "rich_text": {"equals": isbn}}):
+            return True
+    except Exception:
+        pass
     try:
-        if title:
-            res = notion.databases.query(
-                database_id=NOTION_DATABASE_ID,
-                filter={"property": "タイトル", "title": {"equals": title}},
-            )
-            print(f"[dup-check] title query results: {len(res['results'])}", file=sys.stderr)
-            if res["results"]:
-                return True
-    except Exception as e:
-        print(f"[dup-check] title query error: {e}", file=sys.stderr)
+        if title and _notion_query({"property": "タイトル", "title": {"equals": title}}):
+            return True
+    except Exception:
+        pass
     return False
 
 
