@@ -37,38 +37,54 @@ def isbn10_to_13(isbn10: str) -> str:
     return digits + str(check)
 
 
-def fetch_open_library(asin_or_isbn: str) -> dict | None:
-    """Open Library APIで書籍情報を取得（無料・制限なし）"""
+def fetch_book_info(asin_or_isbn: str) -> dict | None:
+    """OpenBD→NDL の順で書籍情報を取得（日本の本向け・無料・制限なし）"""
     isbns = [asin_or_isbn]
     if len(asin_or_isbn) == 10 and asin_or_isbn.isdigit():
         isbns.append(isbn10_to_13(asin_or_isbn))
 
+    # OpenBD（日本の出版業界API）
+    for isbn in isbns:
+        try:
+            r = httpx.get(f"https://api.openbd.jp/v1/get?isbn={isbn}", timeout=10)
+            items = r.json()
+            if items and items[0]:
+                s = items[0]["summary"]
+                pubdate = s.get("pubdate", "")
+                year_match = re.search(r"\d{4}", pubdate)
+                author = re.sub(r",\d{4}-.*", "", s.get("author", "")).replace(",", " ")
+                return {
+                    "title": s.get("title", ""),
+                    "authors": author,
+                    "publisher": s.get("publisher", ""),
+                    "published_year": int(year_match.group()) if year_match else None,
+                    "isbn": isbn,
+                    "description": "",
+                }
+        except Exception:
+            continue
+
+    # NDL（国立国会図書館）をフォールバックに
     for isbn in isbns:
         try:
             r = httpx.get(
-                f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data",
+                f"https://ndlsearch.ndl.go.jp/api/sru?operation=searchRetrieve&query=isbn%3D{isbn}&recordSchema=dcndl&maximumRecords=1",
                 timeout=10,
             )
-            data = r.json()
-            if not data:
+            text = r.text
+            title_match = re.search(r"<dc:title>([^<]+)</dc:title>", text)
+            creator_match = re.search(r"<dc:creator>([^<]+)</dc:creator>", text)
+            publisher_match = re.search(r"<dc:publisher>([^<]+)</dc:publisher>", text)
+            date_match = re.search(r"<dc:date>(\d{4})", text)
+            if not title_match:
                 continue
-            info = next(iter(data.values()))
-            authors = ", ".join(a.get("name", "") for a in info.get("authors", []))
-            publishers = info.get("publishers", [{}])
-            publisher = publishers[0].get("name", "") if publishers else ""
-            publish_date = info.get("publish_date", "")
-            year_match = re.search(r"\d{4}", publish_date)
-            year = int(year_match.group()) if year_match else None
-            description = info.get("notes", "") or info.get("description", "")
-            if isinstance(description, dict):
-                description = description.get("value", "")
             return {
-                "title": info.get("title", ""),
-                "authors": authors,
-                "publisher": publisher,
-                "published_year": year,
+                "title": title_match.group(1).strip(),
+                "authors": creator_match.group(1).strip() if creator_match else "",
+                "publisher": publisher_match.group(1).strip() if publisher_match else "",
+                "published_year": int(date_match.group(1)) if date_match else None,
                 "isbn": isbn,
-                "description": str(description)[:400],
+                "description": "",
             }
         except Exception:
             continue
@@ -161,22 +177,22 @@ async def add_book(req: BookRequest):
 
     book_data = {}
 
-    # AmazonのURLの場合はASINからOpen Library APIで取得
+    # AmazonのURLの場合はASINからOpenBD/NDL APIで取得
     asin = extract_asin(url)
     if asin:
-        ol = fetch_open_library(asin)
-        if ol:
+        info = fetch_book_info(asin)
+        if info:
             book_data = {
-                "title": ol["title"],
-                "authors": ol["authors"],
-                "publisher": ol["publisher"],
-                "published_year": ol["published_year"],
-                "isbn": ol["isbn"],
+                "title": info["title"],
+                "authors": info["authors"],
+                "publisher": info["publisher"],
+                "published_year": info["published_year"],
+                "isbn": info["isbn"],
                 "genres": [],
-                "summary": ol["description"],
+                "summary": info["description"],
             }
 
-    # Amazon以外、またはOpen Libraryで取れなかった場合はページをスクレイピング
+    # Amazon以外、またはAPIで取れなかった場合はページをスクレイピング
     if not book_data.get("title"):
         page_text = fetch_page_text(url)
         if not page_text:
