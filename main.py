@@ -240,19 +240,22 @@ async def add_book(req: BookRequest):
             if not book_data.get("summary"):
                 book_data["summary"] = partial.get("summary", "")
 
-    if is_already_registered(book_data.get("title"), book_data.get("isbn")):
+    title = book_data.get("title") or "不明"
+
+    if is_already_registered(title, book_data.get("isbn")):
         return {
             "status": "skipped",
-            "title": book_data.get("title"),
-            "message": "すでに登録済みです",
+            "title": title,
+            "message": f"「{title}」はすでに登録済みです",
         }
 
     notion_url = add_to_notion(book_data, url)
 
     return {
         "status": "ok",
-        "title": book_data.get("title"),
+        "title": title,
         "notion_url": notion_url,
+        "message": f"「{title}」をNotionに登録しました",
     }
 
 
