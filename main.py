@@ -11,9 +11,9 @@ from notion_client import Client as NotionClient
 
 app = FastAPI()
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-NOTION_API_KEY = os.environ["NOTION_API_KEY"]
-NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
+NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 
 notion = NotionClient(auth=NOTION_API_KEY)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
