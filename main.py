@@ -149,20 +149,26 @@ JSONのみを返してください。余分なテキストは不要です。"""
 
 
 def is_already_registered(title: str, isbn: str | None) -> bool:
-    if isbn:
-        res = notion.databases.query(
-            database_id=NOTION_DATABASE_ID,
-            filter={"property": "ISBN", "rich_text": {"equals": isbn}},
-        )
-        if res["results"]:
-            return True
-    if title:
-        res = notion.databases.query(
-            database_id=NOTION_DATABASE_ID,
-            filter={"property": "タイトル", "title": {"equals": title}},
-        )
-        if res["results"]:
-            return True
+    try:
+        if isbn:
+            res = notion.databases.query(
+                database_id=NOTION_DATABASE_ID,
+                filter={"property": "ISBN", "rich_text": {"equals": isbn}},
+            )
+            if res["results"]:
+                return True
+    except Exception:
+        pass
+    try:
+        if title:
+            res = notion.databases.query(
+                database_id=NOTION_DATABASE_ID,
+                filter={"property": "タイトル", "title": {"equals": title}},
+            )
+            if res["results"]:
+                return True
+    except Exception:
+        pass
     return False
 
 
