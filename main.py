@@ -149,6 +149,7 @@ JSONのみを返してください。余分なテキストは不要です。"""
 
 
 def is_already_registered(title: str, isbn: str | None) -> bool:
+    import sys
     try:
         if isbn:
             res = notion.databases.query(
@@ -157,18 +158,19 @@ def is_already_registered(title: str, isbn: str | None) -> bool:
             )
             if res["results"]:
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[dup-check] ISBN query error: {e}", file=sys.stderr)
     try:
         if title:
             res = notion.databases.query(
                 database_id=NOTION_DATABASE_ID,
                 filter={"property": "タイトル", "title": {"equals": title}},
             )
+            print(f"[dup-check] title query results: {len(res['results'])}", file=sys.stderr)
             if res["results"]:
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[dup-check] title query error: {e}", file=sys.stderr)
     return False
 
 
