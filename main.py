@@ -222,24 +222,41 @@ async def add_book(req: BookRequest):
                 "summary": info["description"],
             }
 
+    api_credit_error = False
+
     # Amazon以外、またはAPIで取れなかった場合はページをスクレイピング
     if not book_data.get("title"):
         page_text = fetch_page_text(url)
         if not page_text:
             raise HTTPException(status_code=400, detail="URLのページを取得できませんでした")
-        book_data = analyze_with_claude(page_text, url)
+        try:
+            book_data = analyze_with_claude(page_text, url)
+        except anthropic.AuthenticationError:
+            raise HTTPException(status_code=400, detail="APIクレジットが不足しているか、キーが無効です")
+        except Exception as e:
+            if "credit" in str(e).lower() or "billing" in str(e).lower() or "quota" in str(e).lower():
+                api_credit_error = True
+                book_data = {"title": "不明", "genres": [], "summary": ""}
+            else:
+                raise
 
     # Claudeでジャンル・概要を補完
-    if not book_data.get("genres") or not book_data.get("summary"):
+    if not api_credit_error and (not book_data.get("genres") or not book_data.get("summary")):
         title = book_data.get("title") or ""
         description = book_data.get("summary") or ""
         if title or description:
-            claude_input = f"タイトル: {title}\n概要: {description}"
-            partial = analyze_with_claude(claude_input, url)
-            if not book_data.get("genres"):
-                book_data["genres"] = partial.get("genres", [])
-            if not book_data.get("summary"):
-                book_data["summary"] = partial.get("summary", "")
+            try:
+                claude_input = f"タイトル: {title}\n概要: {description}"
+                partial = analyze_with_claude(claude_input, url)
+                if not book_data.get("genres"):
+                    book_data["genres"] = partial.get("genres", [])
+                if not book_data.get("summary"):
+                    book_data["summary"] = partial.get("summary", "")
+            except Exception as e:
+                if "credit" in str(e).lower() or "billing" in str(e).lower() or "quota" in str(e).lower() or "overloaded" in str(e).lower():
+                    api_credit_error = True
+                else:
+                    raise
 
     title = book_data.get("title") or "不明"
 
@@ -252,11 +269,16 @@ async def add_book(req: BookRequest):
 
     notion_url = add_to_notion(book_data, url)
 
+    if api_credit_error:
+        msg = f"「{title}」を登録しました（APIクレジット不足のためジャンル・概要なし）"
+    else:
+        msg = f"「{title}」をNotionに登録しました"
+
     return {
         "status": "ok",
         "title": title,
         "notion_url": notion_url,
-        "message": f"「{title}」をNotionに登録しました",
+        "message": msg,
     }
 
 
