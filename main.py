@@ -36,7 +36,9 @@ def fetch_page_text(url: str) -> str:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
-        )
+        ),
+        "Accept-Language": "ja,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
     try:
         r = httpx.get(url, headers=headers, follow_redirects=True, timeout=15)
@@ -45,8 +47,35 @@ def fetch_page_text(url: str) -> str:
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
         return soup.get_text(separator="\n", strip=True)[:8000]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
+    except Exception:
+        return ""
+
+
+def fetch_via_google_books(asin_or_isbn: str) -> dict | None:
+    for query in [f"isbn:{asin_or_isbn}", asin_or_isbn]:
+        try:
+            r = httpx.get(
+                f"https://www.googleapis.com/books/v1/volumes?q={query}&langRestrict=ja",
+                timeout=10,
+            )
+            items = r.json().get("items", [])
+            if items:
+                info = items[0]["volumeInfo"]
+                isbn = next(
+                    (i["identifier"] for i in info.get("industryIdentifiers", [])
+                     if i["type"] in ("ISBN_13", "ISBN_10")), None
+                )
+                return {
+                    "title": info.get("title", ""),
+                    "authors": ", ".join(info.get("authors", [])),
+                    "publisher": info.get("publisher", ""),
+                    "published_year": int(info.get("publishedDate", "0")[:4]) if info.get("publishedDate") else None,
+                    "isbn": isbn,
+                    "description": info.get("description", ""),
+                }
+        except Exception:
+            continue
+    return None
 
 
 def fetch_google_books(isbn: str) -> dict | None:
@@ -135,21 +164,41 @@ def add_to_notion(data: dict, url: str) -> str:
 async def add_book(req: BookRequest):
     url = req.url.strip()
 
-    # まずページのテキストを取得
-    page_text = fetch_page_text(url)
+    book_data = {}
 
-    # Claudeで解析
-    book_data = analyze_with_claude(page_text, url)
-
-    # ISBNがあればGoogle Books APIで補完
-    if book_data.get("isbn"):
-        gb = fetch_google_books(book_data["isbn"])
+    # AmazonのURLの場合はASINを取り出しGoogle Books APIで取得
+    asin = extract_asin(url)
+    if asin:
+        gb = fetch_via_google_books(asin)
         if gb:
-            for key in ["title", "authors", "publisher", "published_year"]:
-                if not book_data.get(key) and gb.get(key):
-                    book_data[key] = gb[key]
-            if not book_data.get("summary") and gb.get("description"):
-                book_data["summary"] = gb["description"][:400]
+            book_data = {
+                "title": gb["title"],
+                "authors": gb["authors"],
+                "publisher": gb["publisher"],
+                "published_year": gb["published_year"],
+                "isbn": gb["isbn"],
+                "genres": [],
+                "summary": gb["description"][:400] if gb["description"] else "",
+            }
+
+    # Amazon以外、またはGoogle Booksで取れなかった場合はページをスクレイピング
+    if not book_data.get("title"):
+        page_text = fetch_page_text(url)
+        if not page_text:
+            raise HTTPException(status_code=400, detail="URLのページを取得できませんでした")
+        book_data = analyze_with_claude(page_text, url)
+
+    # Claudeでジャンル・概要を補完（Google Books経由の場合も）
+    if not book_data.get("genres") or not book_data.get("summary"):
+        description = book_data.get("summary") or ""
+        title = book_data.get("title") or ""
+        if title or description:
+            claude_input = f"タイトル: {title}\n概要: {description}"
+            partial = analyze_with_claude(claude_input, url)
+            if not book_data.get("genres"):
+                book_data["genres"] = partial.get("genres", [])
+            if not book_data.get("summary"):
+                book_data["summary"] = partial.get("summary", "")
 
     # Notionに追加
     notion_url = add_to_notion(book_data, url)
