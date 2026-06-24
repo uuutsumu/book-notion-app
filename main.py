@@ -19,7 +19,7 @@ NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 notion = NotionClient(auth=NOTION_API_KEY)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-GENRE_OPTIONS = ["小説", "ビジネス", "自己啓発", "技術・IT", "歴史", "科学", "哲学", "エッセイ", "経済", "その他"]
+GENRE_OPTIONS = ["小説・文学", "人文・思想", "歴史・地理", "社会・政治", "経済・経営", "ビジネス・自己啓発", "サイエンス・テクノロジー", "アート・デザイン", "建築・インテリア", "料理・暮らし", "医療・健康", "教育・学習", "エッセイ・紀行", "その他"]
 
 
 class BookRequest(BaseModel):
