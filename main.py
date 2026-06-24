@@ -30,6 +30,51 @@ def extract_asin(url: str) -> str | None:
     return match.group(1) if match else None
 
 
+def isbn10_to_13(isbn10: str) -> str:
+    digits = "978" + isbn10[:9]
+    total = sum((3 if i % 2 else 1) * int(d) for i, d in enumerate(digits))
+    check = (10 - (total % 10)) % 10
+    return digits + str(check)
+
+
+def fetch_open_library(asin_or_isbn: str) -> dict | None:
+    """Open Library APIで書籍情報を取得（無料・制限なし）"""
+    isbns = [asin_or_isbn]
+    if len(asin_or_isbn) == 10 and asin_or_isbn.isdigit():
+        isbns.append(isbn10_to_13(asin_or_isbn))
+
+    for isbn in isbns:
+        try:
+            r = httpx.get(
+                f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data",
+                timeout=10,
+            )
+            data = r.json()
+            if not data:
+                continue
+            info = next(iter(data.values()))
+            authors = ", ".join(a.get("name", "") for a in info.get("authors", []))
+            publishers = info.get("publishers", [{}])
+            publisher = publishers[0].get("name", "") if publishers else ""
+            publish_date = info.get("publish_date", "")
+            year_match = re.search(r"\d{4}", publish_date)
+            year = int(year_match.group()) if year_match else None
+            description = info.get("notes", "") or info.get("description", "")
+            if isinstance(description, dict):
+                description = description.get("value", "")
+            return {
+                "title": info.get("title", ""),
+                "authors": authors,
+                "publisher": publisher,
+                "published_year": year,
+                "isbn": isbn,
+                "description": str(description)[:400],
+            }
+        except Exception:
+            continue
+    return None
+
+
 def fetch_page_text(url: str) -> str:
     headers = {
         "User-Agent": (
@@ -49,69 +94,6 @@ def fetch_page_text(url: str) -> str:
         return soup.get_text(separator="\n", strip=True)[:8000]
     except Exception:
         return ""
-
-
-def isbn10_to_13(isbn10: str) -> str:
-    digits = "978" + isbn10[:9]
-    total = sum((3 if i % 2 else 1) * int(d) for i, d in enumerate(digits))
-    check = (10 - (total % 10)) % 10
-    return digits + str(check)
-
-
-def fetch_via_google_books(asin_or_isbn: str) -> dict | None:
-    queries = [f"isbn:{asin_or_isbn}"]
-    if len(asin_or_isbn) == 10 and asin_or_isbn.isdigit():
-        isbn13 = isbn10_to_13(asin_or_isbn)
-        queries.append(f"isbn:{isbn13}")
-    queries.append(asin_or_isbn)
-
-    for query in queries:
-        try:
-            r = httpx.get(
-                f"https://www.googleapis.com/books/v1/volumes?q={query}",
-                timeout=10,
-            )
-            items = r.json().get("items", [])
-            if items:
-                info = items[0]["volumeInfo"]
-                isbn = next(
-                    (i["identifier"] for i in info.get("industryIdentifiers", [])
-                     if i["type"] in ("ISBN_13", "ISBN_10")), None
-                )
-                return {
-                    "title": info.get("title", ""),
-                    "authors": ", ".join(info.get("authors", [])),
-                    "publisher": info.get("publisher", ""),
-                    "published_year": int(info.get("publishedDate", "0")[:4]) if info.get("publishedDate") else None,
-                    "isbn": isbn,
-                    "description": info.get("description", ""),
-                }
-        except Exception:
-            continue
-    return None
-
-
-def fetch_google_books(isbn: str) -> dict | None:
-    try:
-        r = httpx.get(
-            f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}",
-            timeout=10,
-        )
-        data = r.json()
-        items = data.get("items", [])
-        if not items:
-            return None
-        info = items[0]["volumeInfo"]
-        return {
-            "title": info.get("title", ""),
-            "authors": ", ".join(info.get("authors", [])),
-            "publisher": info.get("publisher", ""),
-            "published_year": int(info.get("publishedDate", "0")[:4]) if info.get("publishedDate") else None,
-            "isbn": isbn,
-            "description": info.get("description", ""),
-        }
-    except Exception:
-        return None
 
 
 def analyze_with_claude(page_text: str, url: str) -> dict:
@@ -179,32 +161,32 @@ async def add_book(req: BookRequest):
 
     book_data = {}
 
-    # AmazonのURLの場合はASINを取り出しGoogle Books APIで取得
+    # AmazonのURLの場合はASINからOpen Library APIで取得
     asin = extract_asin(url)
     if asin:
-        gb = fetch_via_google_books(asin)
-        if gb:
+        ol = fetch_open_library(asin)
+        if ol:
             book_data = {
-                "title": gb["title"],
-                "authors": gb["authors"],
-                "publisher": gb["publisher"],
-                "published_year": gb["published_year"],
-                "isbn": gb["isbn"],
+                "title": ol["title"],
+                "authors": ol["authors"],
+                "publisher": ol["publisher"],
+                "published_year": ol["published_year"],
+                "isbn": ol["isbn"],
                 "genres": [],
-                "summary": gb["description"][:400] if gb["description"] else "",
+                "summary": ol["description"],
             }
 
-    # Amazon以外、またはGoogle Booksで取れなかった場合はページをスクレイピング
+    # Amazon以外、またはOpen Libraryで取れなかった場合はページをスクレイピング
     if not book_data.get("title"):
         page_text = fetch_page_text(url)
         if not page_text:
             raise HTTPException(status_code=400, detail="URLのページを取得できませんでした")
         book_data = analyze_with_claude(page_text, url)
 
-    # Claudeでジャンル・概要を補完（Google Books経由の場合も）
+    # Claudeでジャンル・概要を補完
     if not book_data.get("genres") or not book_data.get("summary"):
-        description = book_data.get("summary") or ""
         title = book_data.get("title") or ""
+        description = book_data.get("summary") or ""
         if title or description:
             claude_input = f"タイトル: {title}\n概要: {description}"
             partial = analyze_with_claude(claude_input, url)
@@ -213,7 +195,6 @@ async def add_book(req: BookRequest):
             if not book_data.get("summary"):
                 book_data["summary"] = partial.get("summary", "")
 
-    # Notionに追加
     notion_url = add_to_notion(book_data, url)
 
     return {
