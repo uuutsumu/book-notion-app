@@ -148,6 +148,24 @@ JSONのみを返してください。余分なテキストは不要です。"""
     return json.loads(text)
 
 
+def is_already_registered(title: str, isbn: str | None) -> bool:
+    if isbn:
+        res = notion.databases.query(
+            database_id=NOTION_DATABASE_ID,
+            filter={"property": "ISBN", "rich_text": {"equals": isbn}},
+        )
+        if res["results"]:
+            return True
+    if title:
+        res = notion.databases.query(
+            database_id=NOTION_DATABASE_ID,
+            filter={"property": "タイトル", "title": {"equals": title}},
+        )
+        if res["results"]:
+            return True
+    return False
+
+
 def add_to_notion(data: dict, url: str) -> str:
     genres = [g for g in (data.get("genres") or []) if g in GENRE_OPTIONS]
     properties = {
@@ -211,6 +229,13 @@ async def add_book(req: BookRequest):
                 book_data["genres"] = partial.get("genres", [])
             if not book_data.get("summary"):
                 book_data["summary"] = partial.get("summary", "")
+
+    if is_already_registered(book_data.get("title"), book_data.get("isbn")):
+        return {
+            "status": "skipped",
+            "title": book_data.get("title"),
+            "message": "すでに登録済みです",
+        }
 
     notion_url = add_to_notion(book_data, url)
 
