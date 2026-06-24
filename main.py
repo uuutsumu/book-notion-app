@@ -152,6 +152,7 @@ def add_to_notion(data: dict, url: str) -> str:
     genres = [g for g in (data.get("genres") or []) if g in GENRE_OPTIONS]
     properties = {
         "タイトル": {"title": [{"text": {"content": data.get("title") or "不明"}}]},
+        "購入済": {"checkbox": False},
         "著者": {"rich_text": [{"text": {"content": data.get("authors") or ""}}]},
         "出版社": {"rich_text": [{"text": {"content": data.get("publisher") or ""}}]},
         "概要": {"rich_text": [{"text": {"content": data.get("summary") or ""}}]},
